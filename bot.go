@@ -28,7 +28,7 @@ go mod init  gitlab.com/mailru-go/lectures-2022-1/04_net2/05_bot
 
 const (
 	BotToken   = "5406635928:AAGDMQnrQLub1gux8kt2sWnDNYfCMKOzwN4" // "1953480583:AAEU7eBaZnCUt525oUkCMRCQxK1TJmaoVd4"
-	WebhookURL = "https://beautiful-bryce-canyon-60112.herokuapp.com"
+	WebhookURL = "https://dz4-vilin-bot.herokuapp.com/"
 )
 
 var rss = map[string]string{
