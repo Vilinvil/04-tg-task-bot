@@ -51,8 +51,6 @@ func main() {
 		log.Fatalf("Decode failed: %s", err)
 	}
 	fmt.Println(Configuration.TelegramBotToken)
-	Configuration = Config{TelegramBotToken: "5406635928:AAGDMQnrQLub1gux8kt2sWnDNYfCMKOzwN4",
-		WebhookURL: "https://beautiful-bryce-canyon-60112.herokuapp.com"}
 	bot, err := tgbotapi.NewBotAPI(Configuration.TelegramBotToken)
 	if err != nil {
 		log.Fatalf("NewBotAPI failed: %s", err)
