@@ -80,7 +80,7 @@ func main() {
 
 	u := tgbotapi.NewUpdate(0)
 	// Таймаут между запросами, чтобы их стало меньше и соответственно каждый быстрее обрабатывался
-	u.Timeout = 0
+	u.Timeout = 60
 
 	http.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
 		_, err := w.Write([]byte("all is working"))
