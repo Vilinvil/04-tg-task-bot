@@ -1,70 +1,59 @@
 package main
 
+// сюда писать код
+
 import (
-	"encoding/xml"
+	"context"
+	"encoding/json"
 	"fmt"
-	"io/ioutil"
-	"log"
-	"math/rand"
 	"net/http"
-	"os"
-	"time"
 
 	tgbotapi "github.com/skinass/telegram-bot-api/v5"
-	//tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"log"
+	"os"
 )
 
-/*
-для heroku
-находясь в корне репы
-git subtree push --prefix 04_net2/05_bot heroku master
-*/
+var (
+	// урл выдаст вам игрок или хероку
+	// Yet haven`t
 
-/*
-go mod init  gitlab.com/mailru-go/lectures-2022-1/04_net2/05_bot
-*/
+	//WebhookURL = "https://beautiful-bryce-canyon-60112.herokuapp.com"
 
-// https://api.telegram.org/bot1953480583:AAEU7eBaZnCUt525oUkCMRCQxK1TJmaoVd4/getUpdates
-
-const (
-	BotToken   = "5406635928:AAGDMQnrQLub1gux8kt2sWnDNYfCMKOzwN4" // "1953480583:AAEU7eBaZnCUt525oUkCMRCQxK1TJmaoVd4"
-	WebhookURL = "https://dz4-vilin-bot.herokuapp.com/"
+	Configuration = Config{}
 )
 
-var rss = map[string]string{
-	"Habr": "https://habrahabr.ru/rss/best/",
+type Config struct {
+	TelegramBotToken string
+	WebhookURL       string
 }
 
-type RSS struct {
-	Items []Item `xml:"channel>item"`
-}
+func startTaskBot(ctx context.Context) error {
 
-type Item struct {
-	URL   string `xml:"guid"`
-	Title string `xml:"title"`
-}
-
-func getNews(url string) (*RSS, error) {
-	resp, err := http.Get(url)
-	if err != nil {
-		return nil, err
-	}
-
-	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
-
-	rss := new(RSS)
-	err = xml.Unmarshal(body, rss)
-	if err != nil {
-		return nil, err
-	}
-
-	return rss, nil
+	return nil
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
-	bot, err := tgbotapi.NewBotAPI(BotToken)
+	// сюда пишите ваш код
+	// Читаю с конфига токен и буду (webHook url), чтобы в общедоступной репе его никто не забрал
+	file, err := os.Open("config.json")
+	if err != nil {
+		log.Fatalf("Open config.json failed: %s", err)
+	}
+	defer func() {
+		err = file.Close()
+		if err != nil {
+			log.Printf("config.json don`t close:%v", err)
+		}
+	}()
+	decoder := json.NewDecoder(file)
+	err = decoder.Decode(&Configuration)
+	if err != nil {
+		log.Fatalf("Decode failed: %s", err)
+	}
+	fmt.Println(Configuration.TelegramBotToken)
+	Configuration = Config{TelegramBotToken: "5406635928:AAGDMQnrQLub1gux8kt2sWnDNYfCMKOzwN4",
+		WebhookURL: "https://beautiful-bryce-canyon-60112.herokuapp.com"}
+	bot, err := tgbotapi.NewBotAPI(Configuration.TelegramBotToken)
 	if err != nil {
 		log.Fatalf("NewBotAPI failed: %s", err)
 	}
@@ -72,11 +61,14 @@ func main() {
 	bot.Debug = true
 	fmt.Printf("Authorized on account %s\n", bot.Self.UserName)
 
-	wh, err := tgbotapi.NewWebhook(WebhookURL)
+	//Надо будет тоже считать из конфига
+	// Юзаем вебхуки, т.к. бесплатная heroku засыпает через какое-то время, если не отправлять запросы приложению.
+	wh, err := tgbotapi.NewWebhook(Configuration.WebhookURL)
 	if err != nil {
 		log.Fatalf("NewWebhook failed: %s", err)
 	}
 
+	// Отправляем запрос tgApi, тем самым она теперь будет присылать изменения через вебхуку и бесплатная heroku не будет засыпать
 	_, err = bot.Request(wh)
 	if err != nil {
 		log.Fatalf("SetWebhook failed: %s", err)
@@ -84,8 +76,17 @@ func main() {
 
 	updates := bot.ListenForWebhook("/")
 
+	log.Printf("Authorized on account %s", bot.Self.UserName)
+
+	u := tgbotapi.NewUpdate(0)
+	// Таймаут между запросами, чтобы их стало меньше и соответственно каждый быстрее обрабатывался
+	u.Timeout = 60
+
 	http.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("all is working"))
+		_, err := w.Write([]byte("all is working"))
+		if err != nil {
+			log.Printf("Handlefunc /state error write:%v", err)
+		}
 	})
 
 	port := os.Getenv("PORT")
@@ -97,40 +98,25 @@ func main() {
 	}()
 	fmt.Println("start listen :" + port)
 
-	// получаем все обновления из канала updates
+	// В канал updates будут приходить все новые сообщения.
 	for update := range updates {
+		//fmt.Printf("upd: %#v\n", update)
 		log.Printf("upd: %#v\n", update)
-		url, ok := rss[update.Message.Text]
-		if !ok {
-			msg := tgbotapi.NewMessage(
-				update.Message.Chat.ID,
-				`there is only Habr feed availible`,
-			)
-
-			msg.ReplyMarkup = &tgbotapi.ReplyKeyboardMarkup{
-				Keyboard: [][]tgbotapi.KeyboardButton{
-					{
-						{
-							Text: "Habr",
-						},
-					},
-				},
-			}
-			bot.Send(msg)
+		if update.Message == nil {
+			log.Printf("update.Message == nil: %#v\n", update)
 			continue
 		}
-
-		rss, err := getNews(url)
-		if err != nil {
-			bot.Send(tgbotapi.NewMessage(
-				update.Message.Chat.ID,
-				"sorry, error happend",
-			))
+		if update.Message.Chat == nil {
+			log.Printf("update.Message.Chat == nil: %#v\n", update)
+			continue
 		}
-		item := rss.Items[rand.Intn(len(rss.Items))]
-		bot.Send(tgbotapi.NewMessage(
-			update.Message.Chat.ID,
-			item.URL+"\n"+item.Title,
-		))
+		// Создав структуру - можно её отправить обратно боту
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
+		msg.ReplyToMessageID = update.Message.MessageID
+		_, err = bot.Send(msg)
+		if err != nil {
+			log.Printf("Send failed : %#v\n", update)
+		}
+		log.Printf("UPD send: %#v\n", update)
 	}
 }
