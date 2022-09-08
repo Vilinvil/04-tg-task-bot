@@ -25,8 +25,8 @@ import (
 func init() {
 	// upd global var for testing
 	// we use patched version of gopkg.in/telegram-bot-api.v4 ( WebhookURL const -> var)
-	Configuration.WebhookURL = "http://127.0.0.1:8081"
-	Configuration.TelegramBotToken = "_golangcourse_test"
+	WebhookURL = "http://127.0.0.1:8081"
+	BotToken = "_golangcourse_test"
 }
 
 var (
@@ -74,7 +74,7 @@ func (srv *TDS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		panic(fmt.Errorf("unknown command %s", r.URL.Path))
 	})
 
-	handler := http.StripPrefix("/bot"+Configuration.TelegramBotToken, mux)
+	handler := http.StripPrefix("/bot"+BotToken, mux)
 	handler.ServeHTTP(w, r)
 }
 
@@ -87,7 +87,7 @@ const (
 
 var (
 	users = map[int64]*tgbotapi.User{
-		Ivanov: {
+		Ivanov: &tgbotapi.User{
 			ID:           Ivanov,
 			FirstName:    "Ivan",
 			LastName:     "Ivanov",
@@ -95,7 +95,7 @@ var (
 			LanguageCode: "ru",
 			IsBot:        false,
 		},
-		Petrov: {
+		Petrov: &tgbotapi.User{
 			ID:           Petrov,
 			FirstName:    "Petr",
 			LastName:     "Pertov",
@@ -103,7 +103,7 @@ var (
 			LanguageCode: "ru",
 			IsBot:        false,
 		},
-		Alexandrov: {
+		Alexandrov: &tgbotapi.User{
 			ID:           Alexandrov,
 			FirstName:    "Alex",
 			LastName:     "Alexandrov",
@@ -168,7 +168,7 @@ func SendMsgToBot(userID int64, text string) error {
 
 	reqBody := bytes.NewBuffer(reqData)
 	//nolint:errcheck
-	req, _ := http.NewRequest(http.MethodPost, Configuration.WebhookURL, reqBody)
+	req, _ := http.NewRequest(http.MethodPost, WebhookURL, reqBody)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
