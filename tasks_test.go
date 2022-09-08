@@ -25,12 +25,12 @@ import (
 func init() {
 	// upd global var for testing
 	// we use patched version of gopkg.in/telegram-bot-api.v4 ( WebhookURL const -> var)
-	Configuration.WebhookURL = "http://127.0.0.1:8081"
+	Configuration.WebhookURL = "http://127.0.0.1:8080"
 	Configuration.TelegramBotToken = "_golangcourse_test"
 }
 
 var (
-	client = &http.Client{Timeout: time.Second}
+	client = &http.Client{Timeout: 5 * time.Second}
 )
 
 // TDS is Telegram Dummy Server
@@ -238,10 +238,29 @@ func TestTasks(t *testing.T) {
 		{
 			// /assign_* - назначает задачу на себя
 			Alexandrov,
+			"/tasks",
+			map[int64]string{
+				Alexandrov: `1. написать бота by @ivanov
+assignee: @ivanov`,
+			},
+		},
+		{
+			// /assign_* - назначает задачу на себя
+			Alexandrov,
 			"/assign_1",
 			map[int64]string{
 				Alexandrov: `Задача "написать бота" назначена на вас`,
 				Ivanov:     `Задача "написать бота" назначена на @aalexandrov`,
+			},
+		},
+		{
+			// в случае если задача была назначена на кого-то - он получает уведомление об этом
+			// в данном случае она была назначена на Alexandrov, поэтому ему отправляется уведомление
+			Petrov,
+			"/tasks",
+			map[int64]string{
+				Petrov: `1. написать бота by @ivanov
+assignee: @aalexandrov`,
 			},
 		},
 		{
