@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	tgbotapi "github.com/skinass/telegram-bot-api/v5"
-	"golang.org/x/exp/slices"
 	"log"
 	"net/http"
 	"os"
@@ -17,17 +16,24 @@ import (
 	"text/template"
 )
 
+var (
+	Tasks            = make(map[int64]Task, 0)
+	Users            = make(map[int64]User)
+	lastIdTask int64 = 0
+
+	Configuration = Config{}
+
+	tmpl    = template.New("TemplTasks")
+	tmplNew = template.New("TemplNewTask")
+)
+
 type Config struct {
 	TelegramBotToken string
 	WebhookURL       string
 }
 
-//type IdTask int64
-//
-//type IdUser int64
-
 type Task struct {
-	Val       string
+	Text      string
 	IdOwn     int64
 	IdPerform int64
 }
@@ -38,39 +44,67 @@ type User struct {
 	TasksPerformId []int64
 }
 
-var (
-	Tasks = make([]Task, 0)
-	Users = make(map[int64]User)
+func (u *User) maxLenSl() int {
+	if len(u.TasksPerformId) > len(u.TasksOwnId) {
+		return len(u.TasksPerformId)
+	}
+	return len(u.TasksOwnId)
+}
 
-	Configuration = Config{}
+func (u *User) DelElemFromSl(whichSl string, elem int64) error {
+	sl := make([]int64, u.maxLenSl())
+	if whichSl == "TasksOwnId" {
+		copy(sl, u.TasksOwnId)
+	} else {
+		copy(sl, u.TasksPerformId)
+	}
 
-	tmpl    = template.New("TemplTasks")
-	tmplNew = template.New("TemplNewTask")
-)
+	for key, val := range sl {
+		if val == elem {
+			sl = append(sl[:key], sl[key+1:]...)
+			if whichSl == "TasksOwnId" {
+				copy(u.TasksOwnId, sl)
+				u.TasksOwnId = u.TasksOwnId[:len(u.TasksOwnId)-1]
+			} else {
+				copy(u.TasksPerformId, sl)
+				u.TasksPerformId = u.TasksPerformId[:len(u.TasksPerformId)-1]
+			}
+			return nil
+		}
+	}
 
-func writeMsgTasks(chose []int64, IdUser int64) (string, error) {
+	return fmt.Errorf("elem: %d not exist in slice %s", elem, whichSl)
+}
+
+func writeMsgTasks(chose []int64, IdUser int64, assignBool bool) (string, error) {
 	buf := bytes.Buffer{}
 	tmpl, err := tmpl.Parse(TemplTasks)
 	if err != nil {
 		return "", fmt.Errorf("tmpl.Parse(TemplTasks): %v", err)
 	}
-	for key, val := range Tasks {
-		if slices.Contains(chose, int64(key+1)) && val.Val != "" {
-			tmpl.Execute(&buf, struct {
-				Key             int
-				Val             string
-				FreeTask        bool
-				MyTask          bool
-				UserNamePerform string
-				UserNameOwner   string
-			}{Key: key + 1,
-				Val:             val.Val,
-				FreeTask:        val.IdPerform == 0,
-				MyTask:          IdUser == val.IdPerform,
-				UserNamePerform: Users[val.IdPerform].UserName,
-				UserNameOwner:   Users[val.IdOwn].UserName})
+
+	// Не красиво и нет кучи проверок
+	for _, val := range chose {
+		err := tmpl.Execute(&buf, struct {
+			Key             int64
+			Val             string
+			FreeTask        bool
+			AssignBool      bool
+			MyTask          bool
+			UserNamePerform string
+			UserNameOwner   string
+		}{Key: val,
+			Val:             Tasks[val].Text,
+			FreeTask:        Tasks[val].IdPerform == 0,
+			AssignBool:      assignBool,
+			MyTask:          IdUser == Tasks[val].IdPerform,
+			UserNamePerform: Users[Tasks[val].IdPerform].UserName,
+			UserNameOwner:   Users[Tasks[val].IdOwn].UserName})
+		if err != nil {
+			log.Printf("Error template is: %v", err)
 		}
 	}
+
 	if buf.Bytes() != nil {
 		msgText := buf.String()
 		msgText = strings.TrimRight(msgText, "\n")
@@ -81,8 +115,7 @@ func writeMsgTasks(chose []int64, IdUser int64) (string, error) {
 	}
 }
 
-func startTaskBot(ctx context.Context) error {
-	// сюда пишите ваш код
+func startTaskBot(ctx context.Context) (resErr error) {
 	// Читаю с конфига токен и буду (webHook url), чтобы в общедоступной репе его никто не забрал
 	file, err := os.Open("config.json")
 	if err != nil {
@@ -94,21 +127,21 @@ func startTaskBot(ctx context.Context) error {
 			log.Printf("config.json don`t close: %v", err)
 		}
 	}()
+
 	decoder := json.NewDecoder(file)
 	err = decoder.Decode(&Configuration)
 	if err != nil {
 		return fmt.Errorf("decode failed: %s", err)
 	}
-	fmt.Println(Configuration.TelegramBotToken)
+
+	log.Printf("Bot token: %v\n", Configuration.TelegramBotToken)
 	bot, err := tgbotapi.NewBotAPI(Configuration.TelegramBotToken)
 	if err != nil {
 		return fmt.Errorf("NewBotAPI failed: %v", err)
 	}
 
 	bot.Debug = true
-	fmt.Printf("Authorized on account %s\n", bot.Self.UserName)
 
-	//Надо будет тоже считать из конфига
 	// Юзаем вебхуки, т.к. бесплатная heroku засыпает через какое-то время, если не отправлять запросы приложению.
 	wh, err := tgbotapi.NewWebhook(Configuration.WebhookURL)
 	if err != nil {
@@ -138,17 +171,16 @@ func startTaskBot(ctx context.Context) error {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8081"
 	}
 	go func() {
 		log.Fatalf("Http err: %v", http.ListenAndServe(":"+port, nil))
 	}()
-	fmt.Println("start listen :" + port)
+	log.Printf("start listen :%v\n", port)
+
 	// В канал updates будут приходить все новые сообщения.
 	for update := range updates {
-		//fmt.Printf("upd: %#v\n", update)
 		log.Printf("upd: %#v\n", update)
-		command := update.Message.Text
 		if update.Message == nil {
 			log.Printf("update.Message == nil: %#v\n", update)
 			continue
@@ -161,57 +193,70 @@ func startTaskBot(ctx context.Context) error {
 			log.Printf("update.Message.From == nil: %#v\n", update)
 			continue
 		}
+		command := update.Message.Text
+
 		msgText := ""
+
+		_, ok := Users[update.Message.From.ID]
+		if !ok {
+			Users[update.Message.From.ID] = User{
+				UserName:       update.Message.From.UserName,
+				TasksOwnId:     make([]int64, 0),
+				TasksPerformId: make([]int64, 0),
+			}
+		}
+
 		switch {
 		case strings.HasPrefix(command, "/tasks"):
 			{
-				_, ok := Users[update.Message.From.ID]
-				if !ok {
-					Users[update.Message.From.ID] = User{
-						UserName:       update.Message.From.UserName,
-						TasksOwnId:     make([]int64, 0),
-						TasksPerformId: make([]int64, 0),
-					}
-				}
 				if len(Tasks) == 0 {
 					msgText = "Нет задач"
 					break
 				}
 
 				choseAll := make([]int64, 0)
-				// слайс из Id всех задач
-				for _, val := range Users {
-					choseAll = append(choseAll, val.TasksOwnId...)
+				//слайс из Id всех задач
+				for i := int64(0); i <= lastIdTask; i++ {
+					_, ok := Tasks[i]
+					if ok {
+						choseAll = append(choseAll, i)
+					}
 				}
-				msgText, err = writeMsgTasks(choseAll, update.Message.From.ID)
+				msgText, err = writeMsgTasks(choseAll, update.Message.From.ID, true)
 				if err != nil {
 					return fmt.Errorf("writeMsgTasks: %v", err)
 				}
 			}
 		case strings.HasPrefix(command, "/my"):
 			{
-				msgText, err = writeMsgTasks(Users[update.Message.From.ID].TasksPerformId, update.Message.From.ID)
+				// add check ok and no nil Task perform
+				msgText, err = writeMsgTasks(Users[update.Message.From.ID].TasksPerformId, update.Message.From.ID, false)
 				if err != nil {
 					return fmt.Errorf("writeMsgTasks: %v", err)
 				}
 			}
 		case strings.HasPrefix(command, "/owner"):
 			{
-				msgText, err = writeMsgTasks(Users[update.Message.From.ID].TasksOwnId, update.Message.From.ID)
+				msgText, err = writeMsgTasks(Users[update.Message.From.ID].TasksOwnId, update.Message.From.ID, false)
 				if err != nil {
 					return fmt.Errorf("writeMsgTasks: %v", err)
 				}
 			}
 		case strings.HasPrefix(command, "/new"):
 			{
-				command = strings.Trim(command, "/new ")
-				Tasks = append(Tasks, Task{Val: command, IdOwn: update.Message.From.ID})
+				taskText := strings.Trim(command, "/new ")
+				lastIdTask++
+				Tasks[lastIdTask] = Task{Text: taskText,
+					IdOwn: update.Message.From.ID}
+
 				UserCur, ok := Users[update.Message.From.ID]
 				if !ok {
-					return fmt.Errorf("users[%v] not exist(/new) %v", update.Message.From.ID, err)
+					lastIdTask--
+					return fmt.Errorf("user[%v] not exist(/new) %v", update.Message.From.ID, err)
 				}
-				UserCur.TasksOwnId = append(Users[update.Message.From.ID].TasksOwnId, int64(len(Tasks)))
+				UserCur.TasksOwnId = append(Users[update.Message.From.ID].TasksOwnId, lastIdTask)
 				Users[update.Message.From.ID] = UserCur
+
 				tmplNew, err = tmpl.Parse(TemplNewTask)
 				if err != nil {
 					return fmt.Errorf("tmpl.Parse(TemplNewTask): %v", err)
@@ -219,46 +264,65 @@ func startTaskBot(ctx context.Context) error {
 				buf := bytes.Buffer{}
 				err = tmplNew.Execute(&buf, struct {
 					Task string
-					Id   int
-				}{Task: command, Id: len(Tasks)})
+					Id   int64
+				}{Task: taskText, Id: lastIdTask})
 				msgText = buf.String()
 				//msgText = strings.TrimRight(msgText, "\n")
 				//msgText += "\n"
 			}
 		case strings.HasPrefix(command, "/assign_"):
 			{
-				idTask, err := strconv.Atoi(strings.Trim(command, "/assign_"))
+				tmpIdTask, err := strconv.Atoi(strings.Trim(command, "/assign_"))
 				if err != nil {
 					return fmt.Errorf("strconv.Atoi with idTask wrong(/assign_): %v", err)
 				}
+				idTask := int64(tmpIdTask)
 				UserCur, ok := Users[update.Message.From.ID]
 				if !ok {
 					return fmt.Errorf("users[%v] not exist(/assign_) %v", update.Message.From.ID, err)
 				}
-				if idTask > len(Tasks) || Tasks[idTask-1].Val == "" {
+				if idTask > lastIdTask || idTask < 1 {
 					msgText = "Нет такой задачи"
 				}
-				if Tasks[idTask-1].IdPerform != 0 {
-					msg := tgbotapi.NewMessage(Tasks[idTask-1].IdPerform, fmt.Sprintf(`Задача "%v" назначена на @%v`, Tasks[idTask-1].Val, UserCur.UserName))
+
+				if idPerform := Tasks[idTask].IdPerform; idPerform != 0 {
+					userPerform, ok := Users[idPerform]
+					if !ok {
+						log.Printf("Users[%d] not exist", idPerform)
+					}
+					err = userPerform.DelElemFromSl("TasksPerformId", idTask)
+					if err != nil {
+						log.Printf("DelElemFromSl(\"TasksPerformId\", idTask) is failed. Error is: %v", err)
+					}
+
+					msg := tgbotapi.NewMessage(Tasks[idTask].IdPerform, fmt.Sprintf(`Задача "%v" назначена на @%v`, Tasks[idTask].Text, UserCur.UserName))
 					_, err = bot.Send(msg)
 					if err != nil {
 						log.Printf("Send failed(assign) : %#v\n", update)
 					}
 				}
+				if Tasks[idTask].IdPerform == 0 && update.Message.From.ID != Tasks[idTask].IdOwn {
+					msg := tgbotapi.NewMessage(Tasks[idTask].IdOwn, fmt.Sprintf(`Задача "%v" назначена на @%v`, Tasks[idTask].Text, UserCur.UserName))
+					_, err = bot.Send(msg)
+					if err != nil {
+						log.Printf("Send failed(assign if 2 ) : %#v\n", update)
+					}
+				}
 
-				//UserCur.TasksPerformId[idTask-1] = UserCur.TasksPerformId[len(UserCur.TasksPerformId)-1]
-				//UserCur.TasksPerformId[len(UserCur.TasksPerformId)-1] = 0
-				//UserCur.TasksPerformId = UserCur.TasksPerformId[:len(UserCur.TasksPerformId)-1]
-				//Users[update.Message.From.ID] = UserCur
+				TmpTask, ok := Tasks[idTask]
+				if !ok {
+					log.Printf("Tasks[%d] not exist (assign)\n", idTask)
+				}
+				TmpTask.IdPerform = update.Message.From.ID
+				Tasks[idTask] = TmpTask
 
-				Tasks[idTask-1].IdPerform = update.Message.From.ID
-				UserCur.TasksPerformId = append(UserCur.TasksPerformId, int64(idTask))
+				UserCur.TasksPerformId = append(UserCur.TasksPerformId, idTask)
 				Users[update.Message.From.ID] = UserCur
-				msgText = fmt.Sprintf(`Задача "%v" назначена на вас`, Tasks[idTask-1].Val)
+				msgText = fmt.Sprintf(`Задача "%v" назначена на вас`, Tasks[idTask].Text)
 			}
 		case strings.HasPrefix(command, "/unassign_"):
 			{
-				idTask, err := strconv.Atoi(strings.Trim(command, "/unassign_"))
+				tmpIdTask, err := strconv.Atoi(strings.Trim(command, "/unassign_"))
 				if err != nil {
 					return fmt.Errorf("strconv.Atoi with idTask wrong(/unassign_): %v", err)
 				}
@@ -266,20 +330,29 @@ func startTaskBot(ctx context.Context) error {
 				if !ok {
 					return fmt.Errorf("users[%v] not exist(/unassign_) %v", update.Message.From.ID, err)
 				}
-				if idTask > len(Tasks) || Tasks[idTask-1].Val == "" {
+				idTask := int64(tmpIdTask)
+				if idTask > lastIdTask || idTask < 1 {
 					msgText = "Нет такой задачи"
 				}
 				log.Printf("Slice %v, ID %v", UserCur.TasksPerformId, idTask)
-				if slices.Contains(UserCur.TasksPerformId, int64(idTask)) {
+
+				if idPerform := Tasks[idTask].IdPerform; idPerform == update.Message.From.ID {
 					// Удаление элемента из слайса
-					UserCur.TasksPerformId[idTask-1] = UserCur.TasksPerformId[len(UserCur.TasksPerformId)-1]
-					UserCur.TasksPerformId[len(UserCur.TasksPerformId)-1] = 0
-					UserCur.TasksPerformId = UserCur.TasksPerformId[:len(UserCur.TasksPerformId)-1]
+					err = UserCur.DelElemFromSl("TasksPerformId", idTask)
+					if err != nil {
+						log.Printf("DelElemFromSl(\"TasksPerformId\", idTask) is failed. Error is: %v", err)
+					}
 					Users[update.Message.From.ID] = UserCur
 
-					Tasks[idTask-1].IdPerform = 0
+					tmpTask, ok := Tasks[idTask]
+					if !ok {
+						log.Printf("Tasks[%d] not exist", idTask)
+					}
+					tmpTask.IdPerform = 0
+					Tasks[idTask] = tmpTask
+
 					msgText = "Принято"
-					msg := tgbotapi.NewMessage(Tasks[idTask-1].IdOwn, fmt.Sprintf(`Задача "%v" осталась без исполнителя`, Tasks[idTask-1].Val))
+					msg := tgbotapi.NewMessage(Tasks[idTask].IdOwn, fmt.Sprintf(`Задача "%v" осталась без исполнителя`, Tasks[idTask].Text))
 					_, err = bot.Send(msg)
 					if err != nil {
 						log.Printf("Send failed(unassign) : %#v\n", update)
@@ -290,7 +363,7 @@ func startTaskBot(ctx context.Context) error {
 			}
 		case strings.HasPrefix(command, "/resolve_"):
 			{
-				idTask, err := strconv.Atoi(strings.Trim(command, "/resolve_"))
+				tmpTask, err := strconv.Atoi(strings.Trim(command, "/resolve_"))
 				if err != nil {
 					return fmt.Errorf("strconv.Atoi with idTask wrong(/resolve_): %v", err)
 				}
@@ -298,27 +371,34 @@ func startTaskBot(ctx context.Context) error {
 				if !ok {
 					return fmt.Errorf("users[%v] not exist(/resolve_) %v", update.Message.From.ID, err)
 				}
-				if idTask > len(Tasks) || Tasks[idTask-1].Val == "" {
+				idTask := int64(tmpTask)
+				if idTask > lastIdTask || idTask < 0 {
 					msgText = "Нет такой задачи"
 				}
-				if slices.Contains(UserCur.TasksPerformId, int64(idTask)) {
-					// Удаление элемента из слайса
-					UserCur.TasksPerformId[idTask-1] = UserCur.TasksPerformId[len(UserCur.TasksPerformId)-1]
-					UserCur.TasksPerformId[len(UserCur.TasksPerformId)-1] = 0
-					UserCur.TasksPerformId = UserCur.TasksPerformId[:len(UserCur.TasksPerformId)-1]
+				if idPerform := Tasks[idTask].IdPerform; idPerform == update.Message.From.ID {
+					log.Printf("Auniq")
+					err = UserCur.DelElemFromSl("TasksPerformId", idTask)
+					if err != nil {
+						log.Printf("DelElemFromSl(\"TasksPerformId\", idTask) is failed. Error is: %v", err)
+					}
 					Users[update.Message.From.ID] = UserCur
 
-					Tasks[idTask-1].IdPerform = 0
-					msgText = fmt.Sprintf(`Задача "%v" выполнена`, Tasks[idTask-1].Val)
-					// Если задачу выполнил не владелец сообщения
-					if update.Message.From.ID != Tasks[idTask-1].IdOwn {
-						msg := tgbotapi.NewMessage(Tasks[idTask-1].IdOwn, fmt.Sprintf(`Задача "%v" выполнена @%v`, Tasks[idTask-1].Val, UserCur.UserName))
+					userOwn := Users[Tasks[idTask].IdOwn]
+					err = userOwn.DelElemFromSl("TasksOwnId", idTask)
+					if err != nil {
+						log.Printf("DelElemFromSl(\"TasksOwnId\", idTask) is failed. Error is: %v", err)
+					}
+					Users[Tasks[idTask].IdOwn] = userOwn
+
+					msgText = fmt.Sprintf(`Задача "%v" выполнена`, Tasks[idTask].Text)
+					if update.Message.From.ID != Tasks[idTask].IdOwn {
+						msg := tgbotapi.NewMessage(Tasks[idTask].IdOwn, fmt.Sprintf(`Задача "%v" выполнена @%v`, Tasks[idTask].Text, UserCur.UserName))
 						_, err = bot.Send(msg)
 						if err != nil {
 							log.Printf("Send failed(unassign) : %#v\n", update)
 						}
 					}
-					Tasks[idTask-1] = Task{}
+					delete(Tasks, idTask)
 				} else {
 					msgText = `Задача не на вас`
 				}
@@ -334,7 +414,7 @@ func startTaskBot(ctx context.Context) error {
 		if err != nil {
 			log.Printf("Send failed(general) : %#v\n", update)
 		}
-		log.Printf("UPD send: %#v\n", update)
+		log.Printf("UPD SEND: %#v\n", update)
 	}
 	return nil
 
