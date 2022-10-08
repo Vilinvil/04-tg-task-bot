@@ -210,7 +210,7 @@ func startTaskBot(ctx context.Context) (resErr error) {
 	go func() {
 		log.Fatalf("Http err: %v. In startTaskBot", http.ListenAndServe(":"+port, nil))
 	}()
-	log.Printf("start listen :%v\n. In startTaskBot", port)
+	log.Printf("start listen :%v. In startTaskBot", port)
 
 	// В канал updates будут приходить все новые сообщения.
 	for update := range updates {
@@ -352,7 +352,13 @@ func startTaskBot(ctx context.Context) (resErr error) {
 					continue
 				}
 
-				if idPerform := Tasks[idTask].IdPerform; idPerform != 0 {
+				idPerform := Tasks[idTask].IdPerform
+				if idPerform == IDCurUser {
+					msgText = fmt.Sprintf(`Задача "%v" уже назначена на вас`, Tasks[idTask].Text)
+					break
+				}
+
+				if idPerform != 0 {
 					userPerform, ok := Users[idPerform]
 					if !ok {
 						log.Printf("Users[%d] not exist. In /assign_. In startTaskBot", idPerform)
