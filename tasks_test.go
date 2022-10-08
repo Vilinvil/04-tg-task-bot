@@ -87,7 +87,7 @@ const (
 
 var (
 	users = map[int64]*tgbotapi.User{
-		Ivanov: {
+		Ivanov: &tgbotapi.User{
 			ID:           Ivanov,
 			FirstName:    "Ivan",
 			LastName:     "Ivanov",
@@ -95,7 +95,7 @@ var (
 			LanguageCode: "ru",
 			IsBot:        false,
 		},
-		Petrov: {
+		Petrov: &tgbotapi.User{
 			ID:           Petrov,
 			FirstName:    "Petr",
 			LastName:     "Pertov",
@@ -103,7 +103,7 @@ var (
 			LanguageCode: "ru",
 			IsBot:        false,
 		},
-		Alexandrov: {
+		Alexandrov: &tgbotapi.User{
 			ID:           Alexandrov,
 			FirstName:    "Alex",
 			LastName:     "Alexandrov",
