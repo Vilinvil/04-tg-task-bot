@@ -295,6 +295,10 @@ func startTaskBot(ctx context.Context) (resErr error) {
 		case strings.HasPrefix(command, "/new"):
 			{
 				taskText := strings.Trim(command, "/new ")
+				if taskText == "" {
+					msgText = "Давай те не будем пытаться создать пустую задачу. Какой в этом смысл?"
+					break
+				}
 				lastIdTask++
 				Tasks[lastIdTask] = Task{Text: taskText,
 					IdOwn: IDCurUser}
