@@ -1,4 +1,4 @@
 *.idea
-*go_build
-*go_test
+go_build*
+go_test*
 config.json
